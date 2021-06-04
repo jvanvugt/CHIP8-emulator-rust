@@ -40,13 +40,12 @@ enum Instruction {
 }
 
 fn parse_opcode(opcode: u16) -> Instruction {
-
     use Instruction::*;
     let a = opcode >> 12 as u8;
     let b = ((opcode >> 8) & 0xf) as u8;
     let c = ((opcode >> 4) & 0xf) as u8;
     let d = ((opcode >> 0) & 0xf) as u8;
-    dbg!(a, b, c, d);
+    // dbg!(a, b, c, d);
     if a == 0 {
         if b == 0 {
             // assert_eq!(c, 0xe);
@@ -92,7 +91,7 @@ fn parse_opcode(opcode: u16) -> Instruction {
             6 => Shr(b),
             7 => SubSwapped(b, c),
             0xe => Shl(b),
-            _ => panic!("Unknown last nibble {}", d)
+            _ => panic!("Unknown last nibble {}", d),
         };
     }
     if a == 9 {
@@ -116,7 +115,7 @@ fn parse_opcode(opcode: u16) -> Instruction {
             0x9 => Key(b),
             0xa => Nkey(b),
             _ => panic!("Unknown 3rd nibble {:#0X}", c),
-        }
+        };
         // return match last_byte {
         //     0x9e => Key(b),
         //     0xa1 => Nkey(b),
@@ -136,7 +135,7 @@ fn parse_opcode(opcode: u16) -> Instruction {
             0x55 => DumpReg(b),
             0x65 => LoadReg(b),
             _ => panic!("Unknown last byte {:#0X}", last_byte),
-        }
+        };
     }
 
     panic!("Unknown opcode {} {} {} {}", a, b, c, d);
@@ -180,13 +179,39 @@ impl CHIP8 {
     }
 
     fn execute(&mut self) {
+        // TODO(joris): I think I should read the program into RAM starting at 512 bytes.
+        //              and then just start executing/parsing lazily
+
+        use Instruction::*;
         let instructions = parse_program(&self.program);
-        for instr in &instructions {
-            dbg!(instr);
-        }
+        // for instr in &instructions {
+        //     dbg!(instr);
+        // }
         while (self.pc as usize) < self.program.len() {
             let instr = instructions[self.pc as usize];
             match instr {
+                Set(reg, num) => {
+                    self.registers[reg as usize] = num;
+                    self.pc += 1;
+                }
+                SetI(num) => {
+                    self.i_reg = num;
+                    self.pc += 1;
+                }
+                Draw(reg_x, reg_y, height_minus_1) {
+                    self.registers[0xf] = 0;
+                    let start_x = self.registers[reg_x];
+                    let start_y = self.registers[reg_y];
+                    for y in start_y..(height_minus_1+1) {
+                        for x in start_x..(start_x+8) {
+                            let color = ;
+                            if self.screen[y][x] == 1 && color == 1{
+                                self.registers[0xf] = 1;
+                            }
+                            self.screen[y][x] ^= color == 1;
+                        }
+                    }
+                }
                 _ => panic!("Instruction {:?} not yet implemented", instr),
             }
         }
