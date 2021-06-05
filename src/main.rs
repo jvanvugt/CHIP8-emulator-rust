@@ -220,7 +220,7 @@ impl CHIP8 {
                             if x_loc > SCREEN_WIDTH {
                                 x_loc -= SCREEN_WIDTH;
                             }
-                            let color = (row_byte.checked_shl((7 - x) as u32).unwrap_or(0) & 1) == 1;
+                            let color = (row_byte >> (7 - x)) & 1 == 1;
                             if self.screen[y_loc][x_loc] && color {
                                 self.registers[0xf] = 1;
                             }
