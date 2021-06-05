@@ -212,12 +212,12 @@ impl CHIP8 {
                     for y in 0..(d) {
                         let row_byte = self.memory[(self.i_reg + y as u16) as usize];
                         let mut y_loc = y as usize + start_y;
-                        if y_loc > SCREEN_HEIGHT {
+                        if y_loc >= SCREEN_HEIGHT {
                             y_loc -= SCREEN_HEIGHT;
                         }
                         for x in 0..8 {
                             let mut x_loc = x as usize + start_x;
-                            if x_loc > SCREEN_WIDTH {
+                            if x_loc >= SCREEN_WIDTH {
                                 x_loc -= SCREEN_WIDTH;
                             }
                             let color = (row_byte >> (7 - x)) & 1 == 1;
