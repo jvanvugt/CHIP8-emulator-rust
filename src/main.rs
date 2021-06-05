@@ -68,7 +68,6 @@ impl CHIP8 {
         let b = ((opcode >> 8) & 0xf) as u8;
         let c = ((opcode >> 4) & 0xf) as u8;
         let d = ((opcode >> 0) & 0xf) as u8;
-        // println!("Executing instruction 0x{:0X}{:0X}{:0X}{:0X}", a, b, c, d);
         match (a, b, c, d) {
                 // CLS
                 (0, 0, 0xE, 0) => {
