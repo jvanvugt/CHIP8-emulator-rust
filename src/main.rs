@@ -1,219 +1,305 @@
+use rand;
 use std::env;
-
-#[derive(Debug, PartialEq, Copy, Clone)]
-enum Instruction {
-    CallMachineCode(u16),
-    Clear,
-    Return,
-    Goto(u16),
-    Call(u16),
-    Eq(u8, u8),
-    Neq(u8, u8),
-    EqReg(u8, u8),
-    Set(u8, u8),
-    AddConst(u8, u8),
-    SetReg(u8, u8),
-    Or(u8, u8),
-    And(u8, u8),
-    Xor(u8, u8),
-    Add(u8, u8),
-    Sub(u8, u8),
-    Shr(u8),
-    SubSwapped(u8, u8),
-    Shl(u8),
-    NeqReg(u8, u8),
-    SetI(u16),
-    Jump(u16),
-    Rand(u8, u8),
-    Draw(u8, u8, u8),
-    Key(u8),
-    Nkey(u8),
-    GetDelay(u8),
-    WaitKey(u8),
-    SetDelay(u8),
-    SetSound(u8),
-    AddI(u8),
-    SetISprite(u8),
-    SetBCD(u8),
-    DumpReg(u8),
-    LoadReg(u8),
-}
-
-fn parse_opcode(opcode: u16) -> Instruction {
-    use Instruction::*;
-    let a = opcode >> 12 as u8;
-    let b = ((opcode >> 8) & 0xf) as u8;
-    let c = ((opcode >> 4) & 0xf) as u8;
-    let d = ((opcode >> 0) & 0xf) as u8;
-    // dbg!(a, b, c, d);
-    if a == 0 {
-        if b == 0 {
-            // assert_eq!(c, 0xe);
-            if d == 0 {
-                return Clear;
-            }
-            if d == 0xe {
-                return Return;
-            }
-        }
-        return CallMachineCode(opcode & 0x0fff);
-    }
-    if a == 1 {
-        return Goto(opcode & 0x0fff);
-    }
-    if a == 2 {
-        return Call(opcode & 0x0fff);
-    }
-    if a == 3 {
-        return Eq(b, (c << 4) | d);
-    }
-    if a == 4 {
-        return Neq(b, (c << 4) | d);
-    }
-    if a == 5 {
-        assert_eq!(d, 0);
-        return EqReg(b, c);
-    }
-    if a == 6 {
-        return Set(b, (c << 4) | d);
-    }
-    if a == 7 {
-        return AddConst(b, (c << 4) | d);
-    }
-    if a == 8 {
-        return match d {
-            0 => SetReg(b, c),
-            1 => Or(b, c),
-            2 => And(b, c),
-            3 => Xor(b, c),
-            4 => Add(b, c),
-            5 => Sub(b, c),
-            6 => Shr(b),
-            7 => SubSwapped(b, c),
-            0xe => Shl(b),
-            _ => panic!("Unknown last nibble {}", d),
-        };
-    }
-    if a == 9 {
-        assert_eq!(d, 0);
-        return NeqReg(b, c);
-    }
-    if a == 0xa {
-        return SetI(opcode & 0x0fff);
-    }
-    if a == 0xb {
-        return Jump(opcode & 0x0fff);
-    }
-    if a == 0xc {
-        return Rand(b, (c << 4) | d);
-    }
-    if a == 0xd {
-        return Draw(b, c, d);
-    }
-    if a == 0xe {
-        return match c {
-            0x9 => Key(b),
-            0xa => Nkey(b),
-            _ => panic!("Unknown 3rd nibble {:#0X}", c),
-        };
-        // return match last_byte {
-        //     0x9e => Key(b),
-        //     0xa1 => Nkey(b),
-        //     _ => panic!("Unknown last byte {:#0X}", last_byte),
-        // }
-    }
-    if a == 0xf {
-        let last_byte = (c << 4) | d;
-        return match last_byte {
-            0x07 => GetDelay(b),
-            0x0a => WaitKey(b),
-            0x15 => SetDelay(b),
-            0x18 => SetSound(b),
-            0x1e => AddI(b),
-            0x29 => SetISprite(b),
-            0x33 => SetBCD(b),
-            0x55 => DumpReg(b),
-            0x65 => LoadReg(b),
-            _ => panic!("Unknown last byte {:#0X}", last_byte),
-        };
-    }
-
-    panic!("Unknown opcode {} {} {} {}", a, b, c, d);
-}
-
-fn parse_program(program: &Vec<u16>) -> Vec<Instruction> {
-    program.iter().map(|p| parse_opcode(*p)).collect()
-}
 
 const MEMORY_SIZE: usize = 4096;
 const NUM_REGISTERS: usize = 16;
-const CALL_STACK_SIZE: usize = 24;
+const STACK_SIZE: u8 = 16;
 const SCREEN_WIDTH: usize = 64;
 const SCREEN_HEIGHT: usize = 32;
 
 struct CHIP8 {
     memory: [u8; MEMORY_SIZE],
     registers: [u8; NUM_REGISTERS],
-    stack: [u16; CALL_STACK_SIZE],
+    stack: [u16; STACK_SIZE as usize],
     delay_timer: u8,
     sound_timer: u8,
     i_reg: u16,
     pc: u16,
-    program: Vec<u16>,
+    sp: u8,
     screen: [[bool; SCREEN_WIDTH]; SCREEN_HEIGHT],
 }
 
 impl CHIP8 {
-    fn new(program: Vec<u16>) -> CHIP8 {
-        CHIP8 {
-            memory: [0; 4096],
-            registers: [0; 16],
-            stack: [0; 24],
+    fn new(program: &Vec<u8>) -> CHIP8 {
+        // TODO(joris): Fill start of memory with font data
+        let program_start: usize = 0x200;
+        let mut chip8 = CHIP8 {
+            memory: [0; MEMORY_SIZE],
+            registers: [0; NUM_REGISTERS],
+            stack: [0; STACK_SIZE as usize],
             delay_timer: 0,
             sound_timer: 0,
             i_reg: 0,
-            pc: 0,
-            program: program,
-            screen: [[false; 64]; 32],
+            pc: program_start as u16,
+            sp: 0,
+            screen: [[false; SCREEN_WIDTH]; SCREEN_HEIGHT],
+        };
+        chip8.init_font();
+        for (i, byte) in program.iter().enumerate() {
+            chip8.memory[program_start + i] = *byte;
         }
+        chip8
+    }
+
+    fn init_font(&mut self) {
+        let font_data: Vec<u8> = vec![
+            0xF0, 0x90, 0x90, 0x90, 0xF0, 0x20, 0x60, 0x20, 0x20, 0x70, 0xF0, 0x10, 0xF0, 0x80,
+            0xF0, 0xF0, 0x10, 0xF0, 0x10, 0xF0, 0x90, 0x90, 0xF0, 0x10, 0x10, 0xF0, 0x80, 0xF0,
+            0x10, 0xF0, 0xF0, 0x80, 0xF0, 0x90, 0xF0, 0xF0, 0x10, 0x20, 0x40, 0x40, 0xF0, 0x90,
+            0xF0, 0x90, 0xF0, 0xF0, 0x90, 0xF0, 0x10, 0xF0, 0xF0, 0x90, 0xF0, 0x90, 0x90, 0xE0,
+            0x90, 0xE0, 0x90, 0xE0, 0xF0, 0x80, 0x80, 0x80, 0xF0, 0xE0, 0x90, 0x90, 0x90, 0xE0,
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, 0xF0, 0x80, 0xF0, 0x80, 0x80,
+        ];
+        for (i, byte) in font_data.iter().enumerate() {
+            self.memory[i] = *byte;
+        }
+    }
+    fn draw_screen(&self) {
+        for y in 0..SCREEN_HEIGHT {
+            for x in 0..SCREEN_WIDTH {
+                print!("{}", if self.screen[y][x] { "#" } else { " " });
+            }
+            print!("\n");
+        }
+        print!("\n");
+    }
+
+    fn execute_op(&mut self, opcode: u16) {
+        let a = opcode >> 12 as u8;
+        let b = ((opcode >> 8) & 0xf) as u8;
+        let c = ((opcode >> 4) & 0xf) as u8;
+        let d = ((opcode >> 0) & 0xf) as u8;
+        // println!("Executing instruction 0x{:0X}{:0X}{:0X}{:0X}", a, b, c, d);
+        match (a, b, c, d) {
+                // CLS
+                (0, 0, 0xE, 0) => {
+                    self.screen = [[false; SCREEN_WIDTH]; SCREEN_HEIGHT];
+                    self.pc += 2;
+                    self.draw_screen();
+                }
+                ,
+                // 00EE - RET
+                (0, 0, 0xE, 0xE) => {
+                    if self.sp == 0 {
+                        std::process::exit(0);
+                    }
+                    self.pc = self.stack[(self.sp - 1) as usize];
+                    self.sp -= 1;
+                },
+                // SYS addr
+                (0, _, _, _) => panic!("Machine code call not supported"),
+                // 1nnn - JP addr
+                (1, _, _, _) => self.pc = opcode & 0x0fff,
+                // 2nnn - CALL addr
+                (2, _, _, _) => {
+                    assert!(self.sp < STACK_SIZE);
+                    self.stack[self.sp as usize] = self.pc + 2;
+                    self.sp += 1;
+                    self.pc = opcode & 0x0fff;
+                },
+                // 3xkk - SE Vx, byte
+                (3, _, _, _) => {
+                    if self.registers[b as usize] == (c << 4) | d {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
+                },
+                // 4xkk - SNE Vx, byte
+                (4, _, _, _) => {
+                    if self.registers[b as usize] != (c << 4) | d {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
+                },
+                // 5xy0 - SE Vx, Vy
+                (5, _, _, 0) => {
+                    if self.registers[b as usize] == self.registers[c as usize] {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
+                },
+                // 6xkk - LD Vx, byte
+                (6, _, _, _) => {
+                    self.registers[b as usize] = (c << 4) | d;
+                    self.pc += 2;
+                },
+                // 7xkk - ADD Vx, byte
+                (7, _, _, _) => {
+                    let vx = self.registers[b as usize];
+                    self.registers[b as usize] = vx.overflowing_add((c << 4) | d).0;
+                    self.pc += 2;
+                },
+                // 8xy0 - LD Vx, Vy
+                (8, _, _, 0) => {
+                    self.registers[b as usize] = self.registers[c as usize];
+                    self.pc += 2;
+                },
+                // 8xy1 - OR Vx, Vy
+                (8, _, _, 1) => {
+                    self.registers[b as usize] |= self.registers[c as usize];
+                    self.pc += 2;
+                },
+                // 8xy2 - AND Vx, Vy
+                (8, _, _, 2) => {
+                    self.registers[b as usize] &= self.registers[c as usize];
+                    self.pc += 2;
+                },
+                // 8xy3 - XOR Vx, Vy
+                (8, _, _, 3) => {
+                    self.registers[b as usize] ^= self.registers[c as usize];
+                    self.pc += 2;
+                },
+                // 8xy4 - ADD Vx, Vy
+                (8, _, _, 4) => {
+                    let vx = self.registers[b as usize];
+                    let (result, overflow) = vx.overflowing_add(self.registers[c as usize]);
+                    self.registers[0xf] = overflow as u8;
+                    self.registers[b as usize] = result;
+                    self.pc += 2;
+                },
+                // 8xy5 - SUB Vx, Vy
+                (8, _, _, 5) => {
+                    let vx = self.registers[b as usize];
+                    let (result, overflow) = vx.overflowing_sub(self.registers[c as usize]);
+                    self.registers[0xf] = overflow as u8;
+                    self.registers[b as usize] = result;
+                    self.pc += 2;
+                },
+                // 8xy6 - SHR Vx {, Vy}
+                (8, _, _, 6) => {
+                    self.registers[0xf] = self.registers[b as usize] & 1;
+                    self.registers[b as usize] >>= 1;
+                    self.pc += 2;
+                },
+                // 8xy7 - SUBN Vx, Vy
+                (8, _, _, 7) => {
+                    self.registers[0xf] = (self.registers[c as usize] > self.registers[b as usize]) as u8;
+                    self.registers[c as usize] -= self.registers[b as usize];
+                    self.pc += 2;
+                },
+                // 8xyE - SHL Vx {, Vy}
+                (8, _, _, 0xE) => {
+                    self.registers[0xf] = self.registers[b as usize] >> 7;
+                    self.registers[b as usize] <<= 1;
+                    self.pc += 2;
+                },
+                // 9xy0 - SNE Vx, Vy
+                (9, _, _, 0) => {
+                    if self.registers[b as usize] != self.registers[c as usize] {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
+                },
+                // Annn - LD I, addr
+                (0xA, _, _, _) => {
+                    self.i_reg = opcode & 0x0fff;
+                    self.pc += 2;
+                },
+                // Bnnn - JP V0, addr
+                (0xB, _, _, _) => {
+                    self.pc = (self.registers[0] as u16) + (opcode & 0x0fff);
+                },
+                // Cxkk - RND Vx, byte
+                (0xC, _, _, _) => {
+                    self.registers[b as usize] = rand::random::<u8>() & ((c << 4) | d);
+                    self.pc += 2;
+                },
+                // Dxyn - DRW Vx, Vy, nibble
+                (0xD, _, _, _) => {
+                    let start_x = self.registers[b as usize] as usize;
+                    let start_y = self.registers[c as usize] as usize;
+                    self.registers[0xf] = 0;
+                    for y in 0..(d) {
+                        let row_byte = self.memory[(self.i_reg + y as u16) as usize];
+                        let mut y_loc = y as usize + start_y;
+                        if y_loc > SCREEN_HEIGHT {
+                            y_loc -= SCREEN_HEIGHT;
+                        }
+                        for x in 0..8 {
+                            let mut x_loc = x as usize + start_x;
+                            if x_loc > SCREEN_WIDTH {
+                                x_loc -= SCREEN_WIDTH;
+                            }
+                            let color = (row_byte.checked_shl((7 - x) as u32).unwrap_or(0) & 1) == 1;
+                            if self.screen[y_loc][x_loc] && color {
+                                self.registers[0xf] = 1;
+                            }
+                            self.screen[y_loc][x_loc] ^= color;
+                        }
+                    }
+                    self.pc += 2;
+                    self.draw_screen();
+                },
+                // Ex9E - SKP Vx
+                (0xE, _, 0x9, 0xE) => {
+                    panic!("Key press not yet implemented");
+                },
+                // ExA1 - SKNP Vx
+                (0xE, _, 0xA, 0x1) => {
+                    panic!("Key press not yet implemented");
+                },
+                // Fx07 - LD Vx, DT
+                (0xF, _, 0x0, 0x7) => {
+                    self.registers[b as usize] = self.delay_timer;
+                    self.pc += 2;
+                },
+                // Fx0A - LD Vx, K
+                (0xF, _, 0x0, 0xA) => {
+                    panic!("Key press not yet implemented");
+                },
+                // Fx15 - LD DT, Vx
+                (0xF, _, 0x1, 0x5) => {
+                    self.delay_timer = self.registers[b as usize];
+                    self.pc += 2;
+                },
+                // Fx18 - LD ST, Vx
+                (0xF, _, 0x1, 0x8) => {
+                    self.sound_timer = self.registers[b as usize];
+                    self.pc += 2;
+                },
+                // Fx1E - ADD I, Vx
+                (0xF, _, 0x1, 0xE) => {
+                    self.i_reg += self.registers[b as usize] as u16;
+                    self.pc += 2;
+                },
+                // Fx29 - LD F, Vx
+                (0xF, _, 0x2, 0x9) => {
+                    let digit = self.registers[b as usize] as u16;
+                    assert!(digit <= 0xF);
+                    self.i_reg = 5 * digit;
+                    self.pc += 2;
+                },
+                // Fx33 - LD B, Vx
+                (0xF, _, 0x3, 0x3) => {
+                    let digit = self.registers[b as usize];
+                    self.memory[self.i_reg as usize] = digit / 100;
+                    self.memory[(self.i_reg + 1) as usize] = (digit / 10) % 100;
+                    self.memory[(self.i_reg+2) as usize] = digit % 10;
+                    self.pc += 2;
+                },
+                // Fx55 - LD [I], Vx
+                (0xF, _, 0x5, 0x5) => {
+                    for x in 0..b {
+                        self.memory[(self.i_reg + x as u16) as usize] = self.registers[x as usize];
+                    }
+                    self.pc += 2;
+                },
+                // Fx65 - LD Vx, [I]
+                (0xF, _, 0x6, 0x5) => {
+                    for x in 0..b {
+                        self.registers[x as usize] = self.memory[(self.i_reg + x as u16) as usize];
+                    }
+                    self.pc += 2;
+                },
+                _ => panic!("Unknown opcode 0x{:0X}{:0X}{:0X}{:0X}", a, b, c, d),
+            };
     }
 
     fn execute(&mut self) {
-        // TODO(joris): I think I should read the program into RAM starting at 512 bytes.
-        //              and then just start executing/parsing lazily
-
-        use Instruction::*;
-        let instructions = parse_program(&self.program);
-        // for instr in &instructions {
-        //     dbg!(instr);
-        // }
-        while (self.pc as usize) < self.program.len() {
-            let instr = instructions[self.pc as usize];
-            match instr {
-                Set(reg, num) => {
-                    self.registers[reg as usize] = num;
-                    self.pc += 1;
-                }
-                SetI(num) => {
-                    self.i_reg = num;
-                    self.pc += 1;
-                }
-                Draw(reg_x, reg_y, height_minus_1) {
-                    self.registers[0xf] = 0;
-                    let start_x = self.registers[reg_x];
-                    let start_y = self.registers[reg_y];
-                    for y in start_y..(height_minus_1+1) {
-                        for x in start_x..(start_x+8) {
-                            let color = ;
-                            if self.screen[y][x] == 1 && color == 1{
-                                self.registers[0xf] = 1;
-                            }
-                            self.screen[y][x] ^= color == 1;
-                        }
-                    }
-                }
-                _ => panic!("Instruction {:?} not yet implemented", instr),
-            }
+        loop {
+            let high_byte = self.memory[self.pc as usize] as u16;
+            let low_byte = self.memory[(self.pc + 1) as usize] as u16;
+            self.execute_op((high_byte << 8) | low_byte);
         }
     }
 }
@@ -225,27 +311,7 @@ fn main() {
         return;
     }
     let rom_file = &args[1];
-    let contents = std::fs::read(rom_file).unwrap();
-    let program: Vec<u16> = contents
-        .chunks(2)
-        .into_iter()
-        .map(|x| ((x[0] as u16) << 8) | (x[1] as u16))
-        .collect();
-    let mut chip8 = CHIP8::new(program);
+    let rom_contents = std::fs::read(rom_file).unwrap();
+    let mut chip8 = CHIP8::new(&rom_contents);
     chip8.execute();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_opcode() {
-        assert_eq!(parse_opcode(0x0fff), Instruction::CallMachineCode(0xfff));
-        assert_eq!(parse_opcode(0x00e0), Instruction::Clear);
-        assert_eq!(parse_opcode(0x00ee), Instruction::Return);
-        assert_eq!(parse_opcode(0x1fff), Instruction::Goto(0xfff));
-        assert_eq!(parse_opcode(0x2fff), Instruction::Call(0xfff));
-        assert_eq!(parse_opcode(0x3fff), Instruction::Eq(0xf, 0xff));
-    }
 }
