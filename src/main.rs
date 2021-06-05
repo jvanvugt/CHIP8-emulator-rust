@@ -273,20 +273,20 @@ impl CHIP8 {
                 (0xF, _, 0x3, 0x3) => {
                     let digit = self.registers[b as usize];
                     self.memory[self.i_reg as usize] = digit / 100;
-                    self.memory[(self.i_reg + 1) as usize] = (digit / 10) % 100;
-                    self.memory[(self.i_reg+2) as usize] = digit % 10;
+                    self.memory[(self.i_reg + 1) as usize] = (digit % 100) / 10;
+                    self.memory[(self.i_reg + 2) as usize] = digit % 10;
                     self.pc += 2;
                 },
                 // Fx55 - LD [I], Vx
                 (0xF, _, 0x5, 0x5) => {
-                    for x in 0..b {
+                    for x in 0..(b+1) {
                         self.memory[(self.i_reg + x as u16) as usize] = self.registers[x as usize];
                     }
                     self.pc += 2;
                 },
                 // Fx65 - LD Vx, [I]
                 (0xF, _, 0x6, 0x5) => {
-                    for x in 0..b {
+                    for x in 0..(b+1) {
                         self.registers[x as usize] = self.memory[(self.i_reg + x as u16) as usize];
                     }
                     self.pc += 2;
