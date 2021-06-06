@@ -1,5 +1,6 @@
 use rand;
 use std::env;
+use sdl2;
 
 const MEMORY_SIZE: usize = 4096;
 const NUM_REGISTERS: usize = 16;
@@ -308,6 +309,13 @@ fn main() {
         println!("Expected exactly 2 arguments");
         return;
     }
+    let sdl2_context = sdl2::init().unwrap();
+    let video_subsystem = sdl2_context.video().unwrap();
+    let _window = video_subsystem.window("CHIP-8 Emulator", 800, 600)
+        .position_centered()
+        .build()
+        .unwrap();
+
     let rom_file = &args[1];
     let rom_contents = std::fs::read(rom_file).unwrap();
     let mut chip8 = CHIP8::new(&rom_contents);
