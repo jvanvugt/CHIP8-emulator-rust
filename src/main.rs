@@ -1,19 +1,18 @@
 use rand;
-use std::env;
 use sdl2;
+use std::env;
 
 const MEMORY_SIZE: usize = 4096;
 const NUM_REGISTERS: usize = 16;
 const STACK_SIZE: u8 = 16;
 const SCREEN_WIDTH: usize = 64;
 const SCREEN_HEIGHT: usize = 32;
-const FONT_DATA: [u8; 16*5] = [
-    0xF0, 0x90, 0x90, 0x90, 0xF0, 0x20, 0x60, 0x20, 0x20, 0x70, 0xF0, 0x10, 0xF0, 0x80,
-    0xF0, 0xF0, 0x10, 0xF0, 0x10, 0xF0, 0x90, 0x90, 0xF0, 0x10, 0x10, 0xF0, 0x80, 0xF0,
-    0x10, 0xF0, 0xF0, 0x80, 0xF0, 0x90, 0xF0, 0xF0, 0x10, 0x20, 0x40, 0x40, 0xF0, 0x90,
-    0xF0, 0x90, 0xF0, 0xF0, 0x90, 0xF0, 0x10, 0xF0, 0xF0, 0x90, 0xF0, 0x90, 0x90, 0xE0,
-    0x90, 0xE0, 0x90, 0xE0, 0xF0, 0x80, 0x80, 0x80, 0xF0, 0xE0, 0x90, 0x90, 0x90, 0xE0,
-    0xF0, 0x80, 0xF0, 0x80, 0xF0, 0xF0, 0x80, 0xF0, 0x80, 0x80,
+const FONT_DATA: [u8; 16 * 5] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, 0x20, 0x60, 0x20, 0x20, 0x70, 0xF0, 0x10, 0xF0, 0x80, 0xF0, 0xF0,
+    0x10, 0xF0, 0x10, 0xF0, 0x90, 0x90, 0xF0, 0x10, 0x10, 0xF0, 0x80, 0xF0, 0x10, 0xF0, 0xF0, 0x80,
+    0xF0, 0x90, 0xF0, 0xF0, 0x10, 0x20, 0x40, 0x40, 0xF0, 0x90, 0xF0, 0x90, 0xF0, 0xF0, 0x90, 0xF0,
+    0x10, 0xF0, 0xF0, 0x90, 0xF0, 0x90, 0x90, 0xE0, 0x90, 0xE0, 0x90, 0xE0, 0xF0, 0x80, 0x80, 0x80,
+    0xF0, 0xE0, 0x90, 0x90, 0x90, 0xE0, 0xF0, 0x80, 0xF0, 0x80, 0xF0, 0xF0, 0x80, 0xF0, 0x80, 0x80,
 ];
 
 struct CHIP8 {
@@ -59,14 +58,29 @@ impl CHIP8 {
             self.memory[i] = *byte;
         }
     }
-    fn draw_screen(&self) {
+
+    fn draw_screen(&self, mut screen_surface: &mut sdl2::surface::SurfaceRef) {
+    // fn draw_screen<T>(&self, canvas: &mut sdl2::render::Canvas<T>) where T: sdl2::render::RenderTarget {
+        let mut tex_surface = sdl2::surface::Surface::new(
+            SCREEN_WIDTH as u32,
+            SCREEN_HEIGHT as u32,
+            sdl2::pixels::PixelFormatEnum::RGB24,
+        ).unwrap();
+        // let texture_creator = canvas.texture_creator();
+        // let texture = texture_creator.create_texture(sdl2::pixels::PixelFormatEnum::RGB24, sdl2::render::TextureAccess::Static, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32).unwrap();
+        let pixels = tex_surface.without_lock_mut().unwrap();
+        // texture.update(rect: R, pixel_data: &[u8], pitch: usize)
         for y in 0..SCREEN_HEIGHT {
             for x in 0..SCREEN_WIDTH {
-                print!("{}", if self.screen[y][x] { "#" } else { " " });
+                let pixel_loc = 3 * (SCREEN_WIDTH * y + x);
+                pixels[pixel_loc + 0] = self.screen[y][x] as u8 * 255;
+                pixels[pixel_loc + 1] = self.screen[y][x] as u8 * 255;
+                pixels[pixel_loc + 2] = self.screen[y][x] as u8 * 255;
             }
-            print!("\n");
         }
-        print!("\n");
+        let dest_rect = screen_surface.rect();
+        tex_surface.blit_scaled(tex_surface.rect(), &mut screen_surface, dest_rect).unwrap();
+        // canvas.te
     }
 
     fn execute_op(&mut self, opcode: u16) {
@@ -79,7 +93,6 @@ impl CHIP8 {
                 (0, 0, 0xE, 0) => {
                     self.screen = [[false; SCREEN_WIDTH]; SCREEN_HEIGHT];
                     self.pc += 2;
-                    self.draw_screen();
                 }
                 ,
                 // 00EE - RET
@@ -232,7 +245,6 @@ impl CHIP8 {
                         }
                     }
                     self.pc += 2;
-                    self.draw_screen();
                 },
                 // Ex9E - SKP Vx
                 (0xE, _, 0x9, 0xE) => {
@@ -310,11 +322,9 @@ impl CHIP8 {
         let key_num = keycode as i32;
         if key_num >= Keycode::Num0 as i32 && key_num <= Keycode::Num9 as i32 {
             Some((key_num - Keycode::Num0 as i32) as usize)
-        }
-        else if key_num >= Keycode::A as i32 && key_num <= Keycode::F as i32 {
+        } else if key_num >= Keycode::A as i32 && key_num <= Keycode::F as i32 {
             Some((key_num - Keycode::A as i32 + 10) as usize)
-        }
-        else {
+        } else {
             None
         }
     }
@@ -323,20 +333,28 @@ impl CHIP8 {
         use sdl2::event::Event;
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit {..} => { return true; },
-                Event::KeyDown { keycode: Some(keycode), .. } => {
-                    match CHIP8::keycode_to_idx(keycode) {
-                        Some(idx) => { self.keys_down[idx] = true; },
-                        None => {},
-                    }
+                Event::Quit { .. } => {
+                    return true;
                 }
-                Event::KeyUp { keycode: Some(keycode), .. } => {
-                    match CHIP8::keycode_to_idx(keycode) {
-                        Some(idx) => { self.keys_down[idx] = false; },
-                        None => {},
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    ..
+                } => match CHIP8::keycode_to_idx(keycode) {
+                    Some(idx) => {
+                        self.keys_down[idx] = true;
                     }
-                }
-                _ => {},
+                    None => {}
+                },
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => match CHIP8::keycode_to_idx(keycode) {
+                    Some(idx) => {
+                        self.keys_down[idx] = false;
+                    }
+                    None => {}
+                },
+                _ => {}
             }
         }
         return false;
@@ -345,7 +363,12 @@ impl CHIP8 {
     fn execute(&mut self) {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
-        let _window = video_subsystem.window("CHIP-8 Emulator", 800, 600)
+        let window = video_subsystem
+            .window(
+                "CHIP-8 Emulator",
+                (SCREEN_WIDTH * 10) as u32,
+                (SCREEN_HEIGHT * 10) as u32,
+            )
             .position_centered()
             .build()
             .unwrap();
@@ -354,12 +377,15 @@ impl CHIP8 {
 
         loop {
             let should_quit = self.process_events(&mut event_pump);
+            let mut surface = window.surface(&mut event_pump).unwrap();
             if should_quit {
                 break;
             }
             let high_byte = self.memory[self.pc as usize] as u16;
             let low_byte = self.memory[(self.pc + 1) as usize] as u16;
             self.execute_op((high_byte << 8) | low_byte);
+            self.draw_screen(&mut surface);
+            surface.finish().unwrap();
         }
     }
 }
