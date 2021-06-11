@@ -1,6 +1,7 @@
 use rand;
 use sdl2;
 use std::env;
+use std::time::{Duration, Instant};
 
 const MEMORY_SIZE: usize = 4096;
 const NUM_REGISTERS: usize = 16;
@@ -14,6 +15,27 @@ const FONT_DATA: [u8; 16 * 5] = [
     0x10, 0xF0, 0xF0, 0x90, 0xF0, 0x90, 0x90, 0xE0, 0x90, 0xE0, 0x90, 0xE0, 0xF0, 0x80, 0x80, 0x80,
     0xF0, 0xE0, 0x90, 0x90, 0x90, 0xE0, 0xF0, 0x80, 0xF0, 0x80, 0xF0, 0xF0, 0x80, 0xF0, 0x80, 0x80,
 ];
+
+struct SquareWave {
+    phase_inc: f32,
+    phase: f32,
+    volume: f32,
+}
+
+impl sdl2::audio::AudioCallback for SquareWave {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        for x in out.iter_mut() {
+            *x = if self.phase <= 0.5 {
+                self.volume
+            } else {
+                -self.volume
+            };
+            self.phase = (self.phase + self.phase_inc) % 1.0;
+        }
+    }
+}
 
 struct CHIP8 {
     // Core interpreter fields
@@ -60,16 +82,13 @@ impl CHIP8 {
     }
 
     fn draw_screen(&self, mut screen_surface: &mut sdl2::surface::SurfaceRef) {
-    // fn draw_screen<T>(&self, canvas: &mut sdl2::render::Canvas<T>) where T: sdl2::render::RenderTarget {
         let mut tex_surface = sdl2::surface::Surface::new(
             SCREEN_WIDTH as u32,
             SCREEN_HEIGHT as u32,
             sdl2::pixels::PixelFormatEnum::RGB24,
-        ).unwrap();
-        // let texture_creator = canvas.texture_creator();
-        // let texture = texture_creator.create_texture(sdl2::pixels::PixelFormatEnum::RGB24, sdl2::render::TextureAccess::Static, SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32).unwrap();
+        )
+        .unwrap();
         let pixels = tex_surface.without_lock_mut().unwrap();
-        // texture.update(rect: R, pixel_data: &[u8], pitch: usize)
         for y in 0..SCREEN_HEIGHT {
             for x in 0..SCREEN_WIDTH {
                 let pixel_loc = 3 * (SCREEN_WIDTH * y + x);
@@ -79,8 +98,9 @@ impl CHIP8 {
             }
         }
         let dest_rect = screen_surface.rect();
-        tex_surface.blit_scaled(tex_surface.rect(), &mut screen_surface, dest_rect).unwrap();
-        // canvas.te
+        tex_surface
+            .blit_scaled(tex_surface.rect(), &mut screen_surface, dest_rect)
+            .unwrap();
     }
 
     fn execute_op(&mut self, opcode: u16) {
@@ -363,6 +383,8 @@ impl CHIP8 {
     fn execute(&mut self) {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
+        let audio_subsystem = sdl_context.audio().unwrap();
+
         let window = video_subsystem
             .window(
                 "CHIP-8 Emulator",
@@ -374,18 +396,52 @@ impl CHIP8 {
             .unwrap();
 
         let mut event_pump = sdl_context.event_pump().unwrap();
+        let mut last_update = Instant::now();
 
-        loop {
-            let should_quit = self.process_events(&mut event_pump);
-            let mut surface = window.surface(&mut event_pump).unwrap();
-            if should_quit {
-                break;
+        let desired_spec = sdl2::audio::AudioSpecDesired {
+            freq: Some(44100),
+            channels: Some(1),
+            samples: None,
+        };
+
+        let device = audio_subsystem
+            .open_playback(None, &desired_spec, |spec| SquareWave {
+                phase_inc: 220.0 / spec.freq as f32,
+                phase: 0.0,
+                volume: 0.25,
+            })
+            .unwrap();
+
+        let ns_per_s = 1_000_000_000;
+        let fps = 60;
+        let time_between_frames = Duration::new(0, ns_per_s / fps);
+        'main_loop: loop {
+            let cur_time = Instant::now();
+            while cur_time - last_update > time_between_frames {
+                last_update += time_between_frames;
+
+                let should_quit = self.process_events(&mut event_pump);
+                if should_quit {
+                    break 'main_loop;
+                }
+
+                let high_byte = self.memory[self.pc as usize] as u16;
+                let low_byte = self.memory[(self.pc + 1) as usize] as u16;
+                self.execute_op((high_byte << 8) | low_byte);
+
+                self.sound_timer = self.sound_timer.saturating_sub(1);
+                self.delay_timer = self.delay_timer.saturating_sub(1);
+
+                let mut surface = window.surface(&mut event_pump).unwrap();
+                self.draw_screen(&mut surface);
+                surface.finish().unwrap();
+
+                if self.sound_timer > 0 {
+                    device.resume();
+                } else {
+                    device.pause();
+                }
             }
-            let high_byte = self.memory[self.pc as usize] as u16;
-            let low_byte = self.memory[(self.pc + 1) as usize] as u16;
-            self.execute_op((high_byte << 8) | low_byte);
-            self.draw_screen(&mut surface);
-            surface.finish().unwrap();
         }
     }
 }
@@ -393,7 +449,7 @@ impl CHIP8 {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        println!("Expected exactly 2 arguments");
+        println!("Please provide a rom as argument");
         return;
     }
 
