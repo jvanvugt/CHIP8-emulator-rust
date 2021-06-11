@@ -17,6 +17,7 @@ const FONT_DATA: [u8; 16*5] = [
 ];
 
 struct CHIP8 {
+    // Core interpreter fields
     memory: [u8; MEMORY_SIZE],
     registers: [u8; NUM_REGISTERS],
     stack: [u16; STACK_SIZE as usize],
@@ -26,6 +27,9 @@ struct CHIP8 {
     pc: u16,
     sp: u8,
     screen: [[bool; SCREEN_WIDTH]; SCREEN_HEIGHT],
+
+    // I/O-related state
+    keys_down: [bool; 16],
 }
 
 impl CHIP8 {
@@ -41,6 +45,7 @@ impl CHIP8 {
             pc: program_start as u16,
             sp: 0,
             screen: [[false; SCREEN_WIDTH]; SCREEN_HEIGHT],
+            keys_down: [false; 16],
         };
         chip8.init_font();
         for (i, byte) in program.iter().enumerate() {
@@ -231,11 +236,17 @@ impl CHIP8 {
                 },
                 // Ex9E - SKP Vx
                 (0xE, _, 0x9, 0xE) => {
-                    panic!("Key press not yet implemented");
+                    if self.keys_down[self.registers[b as usize] as usize] {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
                 },
                 // ExA1 - SKNP Vx
                 (0xE, _, 0xA, 0x1) => {
-                    panic!("Key press not yet implemented");
+                    if !self.keys_down[self.registers[b as usize] as usize] {
+                        self.pc += 2;
+                    }
+                    self.pc += 2;
                 },
                 // Fx07 - LD Vx, DT
                 (0xF, _, 0x0, 0x7) => {
@@ -294,8 +305,58 @@ impl CHIP8 {
             };
     }
 
+    fn keycode_to_idx(keycode: sdl2::keyboard::Keycode) -> Option<usize> {
+        use sdl2::keyboard::Keycode;
+        let key_num = keycode as i32;
+        if key_num >= Keycode::Num0 as i32 && key_num <= Keycode::Num9 as i32 {
+            Some((key_num - Keycode::Num0 as i32) as usize)
+        }
+        else if key_num >= Keycode::A as i32 && key_num <= Keycode::F as i32 {
+            Some((key_num - Keycode::A as i32 + 10) as usize)
+        }
+        else {
+            None
+        }
+    }
+
+    fn process_events(&mut self, event_pump: &mut sdl2::EventPump) -> bool {
+        use sdl2::event::Event;
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit {..} => { return true; },
+                Event::KeyDown { keycode: Some(keycode), .. } => {
+                    match CHIP8::keycode_to_idx(keycode) {
+                        Some(idx) => { self.keys_down[idx] = true; },
+                        None => {},
+                    }
+                }
+                Event::KeyUp { keycode: Some(keycode), .. } => {
+                    match CHIP8::keycode_to_idx(keycode) {
+                        Some(idx) => { self.keys_down[idx] = false; },
+                        None => {},
+                    }
+                }
+                _ => {},
+            }
+        }
+        return false;
+    }
+
     fn execute(&mut self) {
+        let sdl_context = sdl2::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+        let _window = video_subsystem.window("CHIP-8 Emulator", 800, 600)
+            .position_centered()
+            .build()
+            .unwrap();
+
+        let mut event_pump = sdl_context.event_pump().unwrap();
+
         loop {
+            let should_quit = self.process_events(&mut event_pump);
+            if should_quit {
+                break;
+            }
             let high_byte = self.memory[self.pc as usize] as u16;
             let low_byte = self.memory[(self.pc + 1) as usize] as u16;
             self.execute_op((high_byte << 8) | low_byte);
@@ -309,12 +370,6 @@ fn main() {
         println!("Expected exactly 2 arguments");
         return;
     }
-    let sdl2_context = sdl2::init().unwrap();
-    let video_subsystem = sdl2_context.video().unwrap();
-    let _window = video_subsystem.window("CHIP-8 Emulator", 800, 600)
-        .position_centered()
-        .build()
-        .unwrap();
 
     let rom_file = &args[1];
     let rom_contents = std::fs::read(rom_file).unwrap();
